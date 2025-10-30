@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  dstack-backend:
+    build: .
+    container_name: dstack-backend
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - DSTACK_URL=http://host.docker.internal:19060
+      - LISTEN_ADDR=0.0.0.0:8080
+      - RUST_LOG=dstack_backend=info
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
