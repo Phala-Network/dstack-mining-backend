@@ -5,6 +5,7 @@ use axum::{
     routing::get,
     Router,
 };
+use enum_tools::EnumTools;
 use local_ip_address::local_ip;
 use nostr_sdk::prelude::*;
 use serde::{Deserialize, Serialize};
