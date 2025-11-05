@@ -133,6 +133,7 @@ jobs:
       - name: Display moved files
         run: ls -R
       - name: Build and push dstack-backend image
+        id: build-and-push
         uses: docker/build-push-action@v6.10.0
         with:
           context: .
