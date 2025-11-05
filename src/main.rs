@@ -27,20 +27,12 @@ pub struct BackendInfo {
     pub ip_address: Option<String>,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
-#[serde(rename_all = "lowercase")]
+#[derive(Copy, Clone, PartialEq, Eq, Serialize, Deserialize, EnumTools)]
+#[enum_tools(Debug, Display, FromStr, TryFrom, Into)]
+#[repr(i32)]
 pub enum DephyWorkerRespondedStatus {
     Available = 1,
     Unavailable = 2,
-}
-
-impl std::fmt::Display for DephyWorkerRespondedStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            DephyWorkerRespondedStatus::Available => write!(f, "Available"),
-            DephyWorkerRespondedStatus::Unavailable => write!(f, "Unavailable"),
-        }
-    }
 }
 
 #[derive(Debug, Deserialize)]
