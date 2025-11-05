@@ -1,5 +1,7 @@
 target/
-Cargo.lock
+test_data/
+test_whitelist.json
+backend*-data/
+whitelist-data/
+*.md
 .git/
-.gitignore
-README.md
