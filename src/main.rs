@@ -185,11 +185,11 @@ fn load_or_create_nostr_keypair(data_dir: &PathBuf) -> Result<Keys, Box<dyn std:
         fs::create_dir_all(data_dir)?;
 
         // Save the secret key
-        let secret_key = keys.secret_key().to_bech32()?;
+        let secret_key = keys.secret_key().to_hex()?;
         fs::write(&keys_file, secret_key)?;
 
         info!("Saved new Nostr keypair to {:?}", keys_file);
-        info!("Public key: {}", keys.public_key().to_bech32()?);
+        info!("Public key: {}", keys.public_key().to_hex()?);
 
         Ok(keys)
     }
@@ -226,8 +226,8 @@ async fn main() {
 
     let nostr_pubkey = keys
         .public_key()
-        .to_bech32()
-        .expect("Failed to convert public key to bech32");
+        .to_hex()
+        .expect("Failed to convert public key to hex");
 
     info!("Nostr public key: {}", nostr_pubkey);
 

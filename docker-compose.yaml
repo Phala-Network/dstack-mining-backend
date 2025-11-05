@@ -9,7 +9,7 @@ services:
     ports:
       - "0.0.0.0:8080:8080"
     volumes:
-      - shared-data:/data
+      - shared-data:/app/data
     healthcheck:
       test:
         [
