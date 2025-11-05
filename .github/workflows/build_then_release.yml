@@ -7,6 +7,12 @@ on:
     branches:
       - "main"
 
+permissions:
+  attestations: write
+  id-token: write
+  contents: write
+  packages: write
+
 env:
   CARGO_TERM_COLOR: always
 
