@@ -37,8 +37,8 @@ pub enum DephyWorkerRespondedStatus {
 impl std::fmt::Display for DephyWorkerRespondedStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            DephyWorkerRespondedStatus::Available => write!(f, "available"),
-            DephyWorkerRespondedStatus::Unavailable => write!(f, "unavailable"),
+            DephyWorkerRespondedStatus::Available => write!(f, "Available"),
+            DephyWorkerRespondedStatus::Unavailable => write!(f, "Unavailable"),
         }
     }
 }

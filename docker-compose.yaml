@@ -1,0 +1,46 @@
+services:
+  dstack-backend:
+    image: mondaylord/dstack-backend:${DSTACK_BACKEND_IMAGE_TAG:-main}
+    restart: always
+    environment:
+      DSTACK_URL: ${DSTACK_BACKEND_DSTACK_URL:-http://host.docker.internal:14520}
+    extra_hosts:
+      host.docker.internal: host-gateway
+    ports:
+      - "0.0.0.0:8080:8080"
+    volumes:
+      - shared-data:/data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--quiet",
+          "--tries=1",
+          "--spider",
+          "http://127.0.0.1:8080/health",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
+  dephy-worker:
+    image: dephyio/dephy-worker:${DEPHY_WORKER_IMAGE_TAG:-next}
+    restart: always
+    depends_on:
+      dstack-backend:
+        condition: service_healthy
+    extra_hosts:
+      host.docker.internal: host-gateway
+    ports:
+      - "0.0.0.0:9001:9001"
+    volumes:
+      - shared-data:/opt/dephy-worker/data
+    command: >
+      --api-addr 0.0.0.0:9001
+      --registry "${DEPHY_WORKER_REGISTRY:-http://host.docker.internal:9000}"
+      --backend "http://dstack-backend:8080/health"
+
+volumes:
+  shared-data:
