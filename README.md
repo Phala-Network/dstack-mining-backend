@@ -28,15 +28,24 @@ Backend1   Backend2  Backend3  Auth服务
 ### 2. Docker Compose
 
 ```bash
-# 启动
+# 1. 复制环境变量文件
+cp .env.example .env
+
+# 2. 编辑 .env 文件，配置 worker 注册信息（必需）
+# 取消注释并填写以下配置：
+# REGISTRY_URL=http://localhost:9200
+# OWNER_ADDRESS=0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb
+# NODE_TYPE=node-H100x1
+
+# 3. 启动服务
 docker-compose up -d
+
+# 4. 查看日志（确认注册成功）
+docker-compose logs -f dstack-backend
 
 # 访问
 # Whitelist: http://localhost:8082
 # Backend: http://localhost:8080
-
-# 自定义端口（如果8082被占用）
-# 编辑 docker-compose.yml: "8888:8082"
 ```
 
 ### 3. 手动部署
@@ -74,6 +83,39 @@ DSTACK_URL=http://localhost:14520 ./target/release/dstack-backend
 - `DSTACK_URL` - DStack地址（默认 `http://localhost:19060`）
 - `DATA_DIR` - 数据目录（默认 `./data`）
 
+#### Worker注册配置（必需）
+**注意：Worker 注册是必需的，只有注册成功后，worker 才能与消息网络通讯。**
+
+- `REGISTRY_URL` - **必需** 注册中心地址（例如 `http://localhost:9200`）
+- `OWNER_ADDRESS` - **必需** 以太坊所有者地址（例如 `0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb`）
+- `NODE_TYPE` - 节点类型（默认 `node-H100x1`）
+
+如果未配置 `REGISTRY_URL` 或 `OWNER_ADDRESS`，Backend 将无法启动。
+
+**注册流程：**
+1. Backend启动时生成或加载Nostr密钥对
+2. 检查是否已在注册中心注册：`GET /permissions/<pubkey>`
+3. 如果未注册，则自动注册：`POST /workers` 发送 `{pubkey, owner, node_type}`
+4. 注册成功后，启动服务并允许与消息网络通讯
+5. **如果注册失败，服务将停止启动并退出**
+
+**示例：**
+```bash
+# 使用环境变量配置
+REGISTRY_URL=http://localhost:9200 \
+OWNER_ADDRESS=0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb \
+NODE_TYPE=node-H100x1 \
+docker-compose up -d
+```
+
+或在 docker-compose.yaml 中配置：
+```yaml
+environment:
+  REGISTRY_URL: http://localhost:9200
+  OWNER_ADDRESS: "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb"
+  NODE_TYPE: node-H100x1
+```
+
 ## 白名单配置
 
 编辑 `whitelist.json`:
@@ -87,6 +129,30 @@ DSTACK_URL=http://localhost:14520 ./target/release/dstack-backend
 ```
 
 重启: `docker-compose restart whitelist`
+
+## Worker自动注册
+
+**重要：Worker 必须成功注册才能与消息网络通讯，注册失败将导致服务无法启动。**
+
+Backend启动时会自动执行以下流程：
+
+1. **生成/加载密钥对**：在 `DATA_DIR/key` 文件中保存 Nostr 私钥
+2. **检查注册状态**：向 `REGISTRY_URL/permissions/<pubkey>` 发送 GET 请求
+3. **自动注册**（如果未注册）：向 `REGISTRY_URL/workers` 发送 POST 请求
+   ```json
+   {
+     "pubkey": "<nostr_pubkey_hex>",
+     "owner": "<ethereum_address>",
+     "node_type": "node-H100x1"
+   }
+   ```
+4. **启动服务**：注册成功后，启动 HTTP API 服务，允许与消息网络通讯
+
+**注意事项：**
+- ⚠️ `REGISTRY_URL` 和 `OWNER_ADDRESS` 是**必需**环境变量，缺少将导致启动失败
+- ⚠️ 注册失败将**阻止**服务启动，错误日志会显示失败原因
+- ✅ 已注册的 worker 会自动跳过注册步骤，直接启动服务
+- ✅ 同一个 Nostr 密钥对只需注册一次
 
 ## 测试
 

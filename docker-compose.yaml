@@ -4,6 +4,11 @@ services:
     restart: always
     environment:
       DSTACK_URL: ${DSTACK_BACKEND_DSTACK_URL:-http://host.docker.internal:14520}
+      # Worker registration configuration (required)
+      # Worker must be registered to communicate with message network
+      REGISTRY_URL: ${REGISTRY_URL}
+      OWNER_ADDRESS: ${OWNER_ADDRESS}
+      NODE_TYPE: ${NODE_TYPE:-node-H100x1}
     extra_hosts:
       host.docker.internal: host-gateway
     ports:

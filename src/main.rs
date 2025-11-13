@@ -58,6 +58,19 @@ struct AppState {
     local_ip: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+struct WorkerRegistration {
+    pubkey: String,
+    owner: String,
+    node_type: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct PermissionResponse {
+    #[serde(default)]
+    registered: bool,
+}
+
 async fn check_dstack_health(state: &AppState) -> BackendInfo {
     let url = format!("{}/prpc/ListGpus?json", state.dstack_url);
 
@@ -196,6 +209,108 @@ fn load_or_create_nostr_keypair(data_dir: &PathBuf) -> Result<Keys, Box<dyn std:
     }
 }
 
+async fn check_worker_registered(
+    client: &reqwest::Client,
+    registry_url: &str,
+    pubkey: &str,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    let url = format!("{}/permissions/{}", registry_url, pubkey);
+
+    info!("Checking worker registration status at: {}", url);
+
+    match client.get(&url).send().await {
+        Ok(response) => {
+            if response.status().is_success() {
+                match response.json::<PermissionResponse>().await {
+                    Ok(perm_response) => {
+                        info!("Worker registration status: registered={}", perm_response.registered);
+                        Ok(perm_response.registered)
+                    }
+                    Err(e) => {
+                        error!("Failed to parse permission response: {}", e);
+                        // If we can't parse, assume not registered
+                        Ok(false)
+                    }
+                }
+            } else {
+                info!("Worker not registered (status: {})", response.status());
+                Ok(false)
+            }
+        }
+        Err(e) => {
+            error!("Failed to check registration status: {}", e);
+            Err(Box::new(e))
+        }
+    }
+}
+
+async fn register_worker(
+    client: &reqwest::Client,
+    registry_url: &str,
+    pubkey: &str,
+    owner: &str,
+    node_type: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let url = format!("{}/workers", registry_url);
+
+    let registration = WorkerRegistration {
+        pubkey: pubkey.to_string(),
+        owner: owner.to_string(),
+        node_type: node_type.to_string(),
+    };
+
+    info!("Registering worker at: {}", url);
+    info!("Registration data: pubkey={}, owner={}, node_type={}", pubkey, owner, node_type);
+
+    match client.post(&url).json(&registration).send().await {
+        Ok(response) => {
+            if response.status().is_success() {
+                info!("Worker registered successfully");
+                Ok(())
+            } else {
+                let status = response.status();
+                let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+                error!("Failed to register worker: status={}, error={}", status, error_text);
+                Err(format!("Registration failed: {} - {}", status, error_text).into())
+            }
+        }
+        Err(e) => {
+            error!("Failed to send registration request: {}", e);
+            Err(Box::new(e))
+        }
+    }
+}
+
+async fn ensure_worker_registered(
+    client: &reqwest::Client,
+    registry_url: &str,
+    pubkey: &str,
+    owner: &str,
+    node_type: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    info!("Ensuring worker is registered...");
+
+    // Check if already registered
+    match check_worker_registered(client, registry_url, pubkey).await {
+        Ok(is_registered) => {
+            if is_registered {
+                info!("Worker is already registered, skipping registration");
+                return Ok(());
+            } else {
+                info!("Worker is not registered, proceeding with registration");
+                // Continue to registration
+            }
+        }
+        Err(e) => {
+            error!("Failed to check registration status, attempting registration anyway: {}", e);
+            // Continue to registration even if check fails
+        }
+    }
+
+    // Register worker
+    register_worker(client, registry_url, pubkey, owner, node_type).await
+}
+
 
 #[tokio::main]
 async fn main() {
@@ -213,10 +328,20 @@ async fn main() {
     let dstack_url = std::env::var("DSTACK_URL").unwrap_or_else(|_| "http://localhost:19060".to_string());
     let data_dir = PathBuf::from(std::env::var("DATA_DIR").unwrap_or_else(|_| "./data".to_string()));
 
+    // Worker registration configuration (required)
+    let registry_url = std::env::var("REGISTRY_URL")
+        .expect("REGISTRY_URL environment variable is required for worker registration");
+    let owner_address = std::env::var("OWNER_ADDRESS")
+        .expect("OWNER_ADDRESS environment variable is required for worker registration");
+    let node_type = std::env::var("NODE_TYPE").unwrap_or_else(|_| "node-H100x1".to_string());
+
     info!("Starting DStack Backend Monitor");
     info!("Listen address: {}", listen_addr);
     info!("DStack URL: {}", dstack_url);
     info!("Data directory: {:?}", data_dir);
+    info!("Registry URL: {}", registry_url);
+    info!("Owner address: {}", owner_address);
+    info!("Node type: {}", node_type);
 
     // Get local IP address
     let local_ip = get_local_ip();
@@ -230,6 +355,32 @@ async fn main() {
         .to_hex();
 
     info!("Nostr public key: {}", nostr_pubkey);
+
+    // Create HTTP client for registration
+    let http_client = reqwest::Client::new();
+
+    // Register worker (required for communication with message network)
+    info!("Worker registration is required to communicate with the message network");
+    match ensure_worker_registered(
+        &http_client,
+        &registry_url,
+        &nostr_pubkey,
+        &owner_address,
+        &node_type,
+    )
+    .await
+    {
+        Ok(_) => {
+            info!("Worker registration completed successfully");
+            info!("Worker is now authorized to communicate with the message network");
+        }
+        Err(e) => {
+            error!("Worker registration failed: {}", e);
+            error!("Cannot start service without successful registration");
+            error!("Worker must be registered to communicate with the message network");
+            std::process::exit(1);
+        }
+    }
 
     // Create shared state
     let state = Arc::new(AppState {
