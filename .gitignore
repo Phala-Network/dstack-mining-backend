@@ -3,3 +3,4 @@ data/
 whitelist-data/
 target/
 .claude/
+.env

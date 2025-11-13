@@ -1,3 +1,4 @@
+use alloy::primitives::Address;
 use axum::{
     extract::State,
     http::StatusCode,
@@ -331,8 +332,15 @@ async fn main() {
     // Worker registration configuration (required)
     let registry_url = std::env::var("REGISTRY_URL")
         .expect("REGISTRY_URL environment variable is required for worker registration");
-    let owner_address = std::env::var("OWNER_ADDRESS")
+    let owner_address_str = std::env::var("OWNER_ADDRESS")
         .expect("OWNER_ADDRESS environment variable is required for worker registration");
+
+    // Parse the owner address using alloy to ensure correct format
+    let owner_address: Address = owner_address_str
+        .parse()
+        .expect("OWNER_ADDRESS must be a valid Ethereum address");
+    let owner_address_formatted = owner_address.to_string();
+
     let node_type = std::env::var("NODE_TYPE").unwrap_or_else(|_| "node-H100x1".to_string());
 
     info!("Starting DStack Backend Monitor");
@@ -340,7 +348,7 @@ async fn main() {
     info!("DStack URL: {}", dstack_url);
     info!("Data directory: {:?}", data_dir);
     info!("Registry URL: {}", registry_url);
-    info!("Owner address: {}", owner_address);
+    info!("Owner address: {}", owner_address_formatted);
     info!("Node type: {}", node_type);
 
     // Get local IP address
@@ -365,7 +373,7 @@ async fn main() {
         &http_client,
         &registry_url,
         &nostr_pubkey,
-        &owner_address,
+        &owner_address_formatted,
         &node_type,
     )
     .await
