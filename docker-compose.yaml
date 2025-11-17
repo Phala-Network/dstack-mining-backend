@@ -1,6 +1,6 @@
 services:
   dstack-backend:
-    image: mondaylord/dstack-backend:${DSTACK_BACKEND_IMAGE_TAG:-main}
+    image: phalanetwork/dstack-backend:${DSTACK_BACKEND_IMAGE_TAG:-main}
     restart: always
     environment:
       DSTACK_URL: ${DSTACK_BACKEND_DSTACK_URL:-http://host.docker.internal:14520}
