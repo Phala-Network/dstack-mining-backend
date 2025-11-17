@@ -115,7 +115,7 @@ jobs:
         uses: docker/metadata-action@v5.6.1
         with:
           images: |
-            ${{ vars.DOCKERHUB_USERNAME }}/dstack-backend
+            ${{ vars.DOCKERHUB_ORG }}/dstack-backend
       - name: Extract all released executable files
         run: |
           for dir in dstack-mining-backend-${{ needs.gen_version.outputs.version }}-*/; do
@@ -144,7 +144,7 @@ jobs:
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@v1
         with:
-          subject-name: "docker.io/${{ vars.DOCKERHUB_USERNAME }}/dstack-backend"
+          subject-name: "docker.io/${{ vars.DOCKERHUB_ORG }}/dstack-backend"
           subject-digest: ${{ steps.build-and-push.outputs.digest }}
           push-to-registry: true
         env:
@@ -159,4 +159,4 @@ jobs:
 
             | Image | Digest | Verification |
             |---|---|---|
-            | `docker.io/${{ vars.DOCKERHUB_USERNAME }}/dstack-backend:${{ github.ref_name }}` | `${{ steps.build-and-push.outputs.digest }}` | [Verify on Sigstore](https://search.sigstore.dev/?hash=${{ steps.build-and-push.outputs.digest }}) |
+            | `docker.io/${{ vars.DOCKERHUB_ORG }}/dstack-backend:${{ github.ref_name }}` | `${{ steps.build-and-push.outputs.digest }}` | [Verify on Sigstore](https://search.sigstore.dev/?hash=${{ steps.build-and-push.outputs.digest }}) |
