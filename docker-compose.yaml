@@ -2,6 +2,7 @@ services:
   dstack-backend:
     image: phalanetwork/dstack-backend:${DSTACK_BACKEND_IMAGE_TAG:-main}
     restart: always
+    user: "0:0"  # Run as root to ensure write permissions to volumes
     environment:
       DSTACK_URL: ${DSTACK_BACKEND_DSTACK_URL:-http://host.docker.internal:14520}
       # Worker registration configuration (required)
@@ -31,7 +32,7 @@ services:
       start_period: 40s
 
   dephy-worker:
-    image: dephyio/dephy-worker:${DEPHY_WORKER_IMAGE_TAG:-next}
+    image: dephyio/dephy-worker-next:${DEPHY_WORKER_IMAGE_TAG:-next}
     restart: always
     depends_on:
       dstack-backend:

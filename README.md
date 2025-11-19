@@ -9,6 +9,7 @@ dstack GPU mining backend service, responsible for monitoring GPU status, regist
 1. **Run dstack on the host machine** with GPU passthrough enabled
 2. **Provide GPU resources** to the dstack service
 3. Ensure the dstack service is accessible at `localhost:14520`
+4. Ensure the dstack VMM port is configured to listen on 0.0.0.0 (it defaults to 127.0.0.1). This is required for Docker container access. You can verify the port binding status using `sudo netstat -tulnp | grep 14520`
 
 Without a properly configured dstack service with GPU resources on the host machine, **you will not be able to earn rewards**.
 
@@ -132,7 +133,7 @@ INFO Backend listening on 0.0.0.0:8080
 ### Basic Configuration
 | Variable | Description | Default Value |
 |----------|-------------|---------------|
-| `DSTACK_BACKEND_DSTACK_URL` | dstack service address | `http://host.docker.internal:14520` |
+| `DSTACK_BACKEND_DSTACK_URL` | dstack service address. Supports both HTTP (e.g., `http://host.docker.internal:14520`) and Unix socket (e.g., `unix:///opt/dstack/dstack-v05x/run/teepod.sock`) | `http://host.docker.internal:14520` |
 | `LISTEN_ADDR` | Backend listening address | `0.0.0.0:8080` |
 | `DATA_DIR` | Data directory (key storage) | `./data` |
 
@@ -209,6 +210,10 @@ ERROR Failed to connect to dstack: ...
 **Solution**:
 1. Ensure dstack service is running at `localhost:14520`
 2. Check `DSTACK_BACKEND_DSTACK_URL` configuration
+3. If using Unix socket (e.g., `unix:///opt/dstack/dstack-v05x/run/teepod.sock`):
+   - Verify the socket file exists: `ls -l /opt/dstack/dstack-v05x/run/teepod.sock`
+   - Ensure the Docker container has access to the socket (mount it as a volume)
+   - Check socket permissions
 
 ## License
 

@@ -18,6 +18,11 @@ use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 use tracing::{error, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use hyper::Request;
+use hyper_util::client::legacy::Client;
+use hyperlocal::{UnixClientExt, Uri as UnixUri};
+use http_body_util::{BodyExt, Empty};
+use hyper::body::Bytes;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BackendInfo {
@@ -52,9 +57,14 @@ struct DStackResponse {
 }
 
 #[derive(Clone)]
+enum DStackConnection {
+    Http { url: String, client: reqwest::Client },
+    UnixSocket { socket_path: String, client: Client<hyperlocal::UnixConnector, Empty<Bytes>> },
+}
+
+#[derive(Clone)]
 struct AppState {
-    dstack_url: String,
-    client: reqwest::Client,
+    connection: DStackConnection,
     nostr_pubkey: String,
     local_ip: Option<String>,
 }
@@ -72,71 +82,76 @@ struct PermissionResponse {
     registered: bool,
 }
 
+async fn fetch_dstack_data(connection: &DStackConnection) -> Result<DStackResponse, String> {
+    match connection {
+        DStackConnection::Http { url, client } => {
+            let full_url = format!("{}/prpc/ListGpus?json", url);
+            info!("Checking dstack health via HTTP at: {}", full_url);
+
+            let response = client.get(&full_url).send().await
+                .map_err(|e| format!("HTTP request failed: {}", e))?;
+
+            if !response.status().is_success() {
+                return Err(format!("HTTP error: {}", response.status()));
+            }
+
+            response.json::<DStackResponse>().await
+                .map_err(|e| format!("Failed to parse JSON: {}", e))
+        }
+        DStackConnection::UnixSocket { socket_path, client } => {
+            info!("Checking dstack health via Unix socket at: {}", socket_path);
+
+            let uri: hyper::Uri = UnixUri::new(socket_path, "/prpc/ListGpus?json").into();
+            let req = Request::builder()
+                .uri(uri)
+                .body(Empty::<Bytes>::new())
+                .map_err(|e| format!("Failed to build request: {}", e))?;
+
+            let response = client.request(req).await
+                .map_err(|e| format!("Unix socket request failed: {}", e))?;
+
+            if !response.status().is_success() {
+                return Err(format!("HTTP error: {}", response.status()));
+            }
+
+            let body_bytes = response.into_body().collect().await
+                .map_err(|e| format!("Failed to read response body: {}", e))?
+                .to_bytes();
+
+            serde_json::from_slice(&body_bytes)
+                .map_err(|e| format!("Failed to parse JSON: {}", e))
+        }
+    }
+}
+
 async fn check_dstack_health(state: &AppState) -> BackendInfo {
-    let url = format!("{}/prpc/ListGpus?json", state.dstack_url);
+    match fetch_dstack_data(&state.connection).await {
+        Ok(dstack_data) => {
+            let metadata = serde_json::json!({
+                "gpu_count": dstack_data.gpus.len(),
+                "gpus": dstack_data.gpus.iter().map(|gpu| {
+                    serde_json::json!({
+                        "slot": gpu.slot,
+                        "product_id": gpu.product_id,
+                        "description": gpu.description,
+                        "is_free": gpu.is_free
+                    })
+                }).collect::<Vec<_>>(),
+                "allow_attach_all": dstack_data.allow_attach_all
+            });
 
-    info!("Checking dstack health at: {}", url);
+            info!("DStack is available with {} GPUs", dstack_data.gpus.len());
 
-    match state.client.get(&url).send().await {
-        Ok(response) => {
-            if response.status().is_success() {
-                match response.json::<DStackResponse>().await {
-                    Ok(dstack_data) => {
-                        let metadata = serde_json::json!({
-                            "gpu_count": dstack_data.gpus.len(),
-                            "gpus": dstack_data.gpus.iter().map(|gpu| {
-                                serde_json::json!({
-                                    "slot": gpu.slot,
-                                    "product_id": gpu.product_id,
-                                    "description": gpu.description,
-                                    "is_free": gpu.is_free
-                                })
-                            }).collect::<Vec<_>>(),
-                            "allow_attach_all": dstack_data.allow_attach_all
-                        });
+            let mut pubkeys = HashSet::new();
+            pubkeys.insert(state.nostr_pubkey.clone());
 
-                        info!("DStack is available with {} GPUs", dstack_data.gpus.len());
-
-                        let mut pubkeys = HashSet::new();
-                        pubkeys.insert(state.nostr_pubkey.clone());
-
-                        BackendInfo {
-                            version: "1.0.0".to_string(),
-                            topic: "dstack-gpu-monitor".to_string(),
-                            pubkeys,
-                            status: DephyWorkerRespondedStatus::Available,
-                            metadata: Some(metadata.to_string()),
-                            ip_address: state.local_ip.clone(),
-                        }
-                    }
-                    Err(e) => {
-                        error!("Failed to parse dstack response: {}", e);
-                        let mut pubkeys = HashSet::new();
-                        pubkeys.insert(state.nostr_pubkey.clone());
-
-                        BackendInfo {
-                            version: "1.0.0".to_string(),
-                            topic: "dstack-gpu-monitor".to_string(),
-                            pubkeys,
-                            status: DephyWorkerRespondedStatus::Unavailable,
-                            metadata: Some(format!("Parse error: {}", e)),
-                            ip_address: state.local_ip.clone(),
-                        }
-                    }
-                }
-            } else {
-                error!("DStack returned error status: {}", response.status());
-                let mut pubkeys = HashSet::new();
-                pubkeys.insert(state.nostr_pubkey.clone());
-
-                BackendInfo {
-                    version: "1.0.0".to_string(),
-                    topic: "dstack-gpu-monitor".to_string(),
-                    pubkeys,
-                    status: DephyWorkerRespondedStatus::Unavailable,
-                    metadata: Some(format!("HTTP error: {}", response.status())),
-                    ip_address: state.local_ip.clone(),
-                }
+            BackendInfo {
+                version: "1.0.0".to_string(),
+                topic: "dstack-gpu-monitor".to_string(),
+                pubkeys,
+                status: DephyWorkerRespondedStatus::Available,
+                metadata: Some(metadata.to_string()),
+                ip_address: state.local_ip.clone(),
             }
         }
         Err(e) => {
@@ -149,7 +164,7 @@ async fn check_dstack_health(state: &AppState) -> BackendInfo {
                 topic: "dstack-gpu-monitor".to_string(),
                 pubkeys,
                 status: DephyWorkerRespondedStatus::Unavailable,
-                metadata: Some(format!("Connection error: {}", e)),
+                metadata: Some(format!("Error: {}", e)),
                 ip_address: state.local_ip.clone(),
             }
         }
@@ -326,7 +341,7 @@ async fn main() {
 
     // Get configuration from environment variables or use defaults
     let listen_addr = std::env::var("LISTEN_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".to_string());
-    let dstack_url = std::env::var("DSTACK_URL").unwrap_or_else(|_| "http://localhost:19060".to_string());
+    let dstack_url_config = std::env::var("DSTACK_URL").unwrap_or_else(|_| "http://localhost:19060".to_string());
     let data_dir = PathBuf::from(std::env::var("DATA_DIR").unwrap_or_else(|_| "./data".to_string()));
 
     // Worker registration configuration (required)
@@ -345,11 +360,27 @@ async fn main() {
 
     info!("Starting DStack Backend Monitor");
     info!("Listen address: {}", listen_addr);
-    info!("DStack URL: {}", dstack_url);
+    info!("DStack URL config: {}", dstack_url_config);
     info!("Data directory: {:?}", data_dir);
     info!("Registry URL: {}", registry_url);
     info!("Owner address: {}", owner_address_formatted);
     info!("Node type: {}", node_type);
+
+    // Parse DSTACK_URL to determine connection type
+    let connection = if dstack_url_config.starts_with("unix://") {
+        let socket_path = dstack_url_config.strip_prefix("unix://").unwrap().to_string();
+        info!("Using Unix socket connection: {}", socket_path);
+        DStackConnection::UnixSocket {
+            socket_path,
+            client: Client::unix(),
+        }
+    } else {
+        info!("Using HTTP connection: {}", dstack_url_config);
+        DStackConnection::Http {
+            url: dstack_url_config,
+            client: reqwest::Client::new(),
+        }
+    };
 
     // Get local IP address
     let local_ip = get_local_ip();
@@ -392,8 +423,7 @@ async fn main() {
 
     // Create shared state
     let state = Arc::new(AppState {
-        dstack_url,
-        client: reqwest::Client::new(),
+        connection,
         nostr_pubkey,
         local_ip,
     });
