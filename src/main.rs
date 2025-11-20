@@ -78,8 +78,12 @@ struct WorkerRegistration {
 
 #[derive(Debug, Deserialize)]
 struct PermissionResponse {
-    #[serde(default)]
-    registered: bool,
+    write: PermissionDetail,
+}
+
+#[derive(Debug, Deserialize)]
+struct PermissionDetail {
+    mode: String,
 }
 
 async fn fetch_dstack_data(connection: &DStackConnection) -> Result<DStackResponse, String> {
@@ -240,8 +244,9 @@ async fn check_worker_registered(
             if response.status().is_success() {
                 match response.json::<PermissionResponse>().await {
                     Ok(perm_response) => {
-                        info!("Worker registration status: registered={}", perm_response.registered);
-                        Ok(perm_response.registered)
+                        let is_registered = perm_response.write.mode == "AllowAll";
+                        info!("Worker registration status: registered={} (mode={})", is_registered, perm_response.write.mode);
+                        Ok(is_registered)
                     }
                     Err(e) => {
                         error!("Failed to parse permission response: {}", e);

@@ -16,6 +16,7 @@ services:
       - "0.0.0.0:8080:8080"
     volumes:
       - shared-data:/app/data
+      - /opt/dstack/dstack-v05x/run:/opt/dstack/dstack-v05x/run
     healthcheck:
       test:
         [
