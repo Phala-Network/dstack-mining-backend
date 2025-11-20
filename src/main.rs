@@ -104,6 +104,7 @@ async fn fetch_dstack_data(connection: &DStackConnection) -> Result<DStackRespon
             let uri: hyper::Uri = UnixUri::new(socket_path, "/prpc/ListGpus?json").into();
             let req = Request::builder()
                 .uri(uri)
+                .header("Host", "127.0.0.1")
                 .body(Empty::<Bytes>::new())
                 .map_err(|e| format!("Failed to build request: {}", e))?;
 
@@ -341,7 +342,10 @@ async fn main() {
 
     // Get configuration from environment variables or use defaults
     let listen_addr = std::env::var("LISTEN_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".to_string());
-    let dstack_url_config = std::env::var("DSTACK_URL").unwrap_or_else(|_| "http://localhost:19060".to_string());
+    let dstack_url_config = std::env::var("DSTACK_URL")
+        .or_else(|_| std::env::var("DSTACK_BACKEND_DSTACK_URL"))
+        .unwrap_or_else(|_| "http://localhost:19060".to_string());
+    let dstack_url_config = dstack_url_config.trim().to_string();
     let data_dir = PathBuf::from(std::env::var("DATA_DIR").unwrap_or_else(|_| "./data".to_string()));
 
     // Worker registration configuration (required)
