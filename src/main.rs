@@ -224,13 +224,13 @@ fn load_or_create_nostr_keypair(data_dir: &PathBuf) -> Result<Keys, Box<dyn std:
 
 async fn ensure_registered(
     client: &reqwest::Client,
-    registry_url: &str,
+    auth_service_url: &str,
     pubkey: &str,
     owner: &str,
     node_type: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let post_url = format!("{}/workers", registry_url);
-    let worker_url = format!("{}/workers/{}", registry_url, pubkey);
+    let post_url = format!("{}/workers", auth_service_url);
+    let worker_url = format!("{}/workers/{}", auth_service_url, pubkey);
 
     let registration = WorkerRegistration {
         pubkey: pubkey.to_string(),
@@ -304,8 +304,8 @@ async fn main() {
     let data_dir = PathBuf::from(std::env::var("DATA_DIR").unwrap_or_else(|_| "./data".to_string()));
 
     // Worker registration configuration (required)
-    let registry_url = std::env::var("REGISTRY_URL")
-        .expect("REGISTRY_URL environment variable is required for worker registration");
+    let auth_service_url = std::env::var("AUTH_SERVICE_URL")
+        .expect("AUTH_SERVICE_URL environment variable is required for worker registration");
     let owner_address_str = std::env::var("OWNER_ADDRESS")
         .expect("OWNER_ADDRESS environment variable is required for worker registration");
 
@@ -321,7 +321,7 @@ async fn main() {
     info!("Listen address: {}", listen_addr);
     info!("DStack URL config: {}", dstack_url_config);
     info!("Data directory: {:?}", data_dir);
-    info!("Registry URL: {}", registry_url);
+    info!("Auth Service URL: {}", auth_service_url);
     info!("Owner address: {}", owner_address_formatted);
     info!("Node type: {}", node_type);
 
@@ -361,7 +361,7 @@ async fn main() {
     info!("Worker registration is required to communicate with the message network");
     match ensure_registered(
         &http_client,
-        &registry_url,
+        &auth_service_url,
         &nostr_pubkey,
         &owner_address_formatted,
         &node_type,

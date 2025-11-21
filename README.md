@@ -72,7 +72,7 @@ Without a properly configured dstack service with GPU resources on the host mach
 - Verify node permissions
 - Manage node whitelist
 
-**You need to provide**: `REGISTRY_URL` configuration
+**You need to provide**: `AUTH_SERVICE_URL` configuration
 
 ### 4. dstack Service (External Service)
 **Role**: GPU virtualization and scheduling service
@@ -96,7 +96,7 @@ nano .env
 Required configuration:
 ```bash
 # Registry center address (required)
-REGISTRY_URL=http://your-registry-server:9200
+AUTH_SERVICE_URL=http://your-registry-server:9200
 
 # Ethereum owner address (required)
 OWNER_ADDRESS=0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb
@@ -140,11 +140,11 @@ INFO Backend listening on 0.0.0.0:8080
 ### Registration Configuration (Required)
 | Variable | Description | Required |
 |----------|-------------|----------|
-| `REGISTRY_URL` | Registry center address | ✅ Required |
+| `AUTH_SERVICE_URL` | Registry center address | ✅ Required |
 | `OWNER_ADDRESS` | Ethereum owner address | ✅ Required |
 | `NODE_TYPE` | Node type | Optional (defaults to `node-H100x1`) |
 
-**Important**: Missing `REGISTRY_URL` or `OWNER_ADDRESS` will prevent the service from starting.
+**Important**: Missing `AUTH_SERVICE_URL` or `OWNER_ADDRESS` will prevent the service from starting.
 
 ## API Endpoints
 
@@ -189,9 +189,9 @@ Backend automatically executes on startup:
 
 ### Startup Failed: Missing Environment Variables
 ```
-Error: REGISTRY_URL environment variable is required for worker registration
+Error: AUTH_SERVICE_URL environment variable is required for worker registration
 ```
-**Solution**: Configure `REGISTRY_URL` and `OWNER_ADDRESS` in `.env` file
+**Solution**: Configure `AUTH_SERVICE_URL` and `OWNER_ADDRESS` in `.env` file
 
 ### Registration Failed
 ```
@@ -200,7 +200,7 @@ ERROR Cannot start service without successful registration
 ```
 **Solution**:
 1. Check if registry server is running
-2. Check if `REGISTRY_URL` is correct
+2. Check if `AUTH_SERVICE_URL` is correct
 3. Check network connectivity
 
 ### dstack Connection Failed
