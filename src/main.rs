@@ -86,6 +86,15 @@ struct PermissionDetail {
     mode: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct WorkerStatusResponse {
+    pubkey: String,
+    owner: String,
+    node_type: String,
+    mint_tx_hash: Option<String>,
+}
+
 async fn fetch_dstack_data(connection: &DStackConnection) -> Result<DStackResponse, String> {
     match connection {
         DStackConnection::Http { url, client } => {
@@ -288,19 +297,55 @@ async fn register_worker(
         Ok(response) => {
             if response.status().is_success() {
                 info!("Worker registered successfully");
-                Ok(())
+                return Ok(());
             } else {
                 let status = response.status();
                 let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
                 error!("Failed to register worker: status={}, error={}", status, error_text);
-                Err(format!("Registration failed: {} - {}", status, error_text).into())
+                // Don't return error immediately, fall through to polling
             }
         }
         Err(e) => {
             error!("Failed to send registration request: {}", e);
-            Err(Box::new(e))
+            // Don't return error immediately, fall through to polling
         }
     }
+
+    // Poll for registration status
+    let status_url = format!("{}/workers/{}", registry_url, pubkey);
+    info!("Polling worker registration status at: {}", status_url);
+
+    for i in 0..10 {
+        info!("Polling attempt {}/10...", i + 1);
+        match client.get(&status_url).send().await {
+            Ok(response) => {
+                if response.status().is_success() {
+                    match response.json::<WorkerStatusResponse>().await {
+                        Ok(status) => {
+                            if let Some(tx_hash) = status.mint_tx_hash {
+                                info!("Worker registration confirmed! Mint tx hash: {}", tx_hash);
+                                return Ok(());
+                            } else {
+                                info!("Worker is minting... (no tx hash yet)");
+                            }
+                        }
+                        Err(e) => {
+                            error!("Failed to parse worker status: {}", e);
+                        }
+                    }
+                } else {
+                    error!("Failed to get worker status: {}", response.status());
+                }
+            }
+            Err(e) => {
+                error!("Failed to request worker status: {}", e);
+            }
+        }
+
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    }
+
+    Err("Registration failed after polling".into())
 }
 
 async fn ensure_worker_registered(

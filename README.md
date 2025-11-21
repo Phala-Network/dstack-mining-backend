@@ -105,20 +105,20 @@ OWNER_ADDRESS=0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb
 NODE_TYPE=node-H100x1
 
 # Worker image version (optional, use v2.0.0 for production)
-DEPHY_WORKER_IMAGE_TAG=v2.0.0
+DEPHY_WORKER_IMAGE_TAG=v2.1.0
 ```
 
 ### 2. Start Services
 
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
 ### 3. View Logs
 
 ```bash
 # View startup logs to confirm successful registration
-docker-compose logs -f dstack-backend
+docker compose logs -f dstack-backend
 ```
 
 After successful startup, you should see:
