@@ -76,24 +76,7 @@ struct WorkerRegistration {
     node_type: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct PermissionResponse {
-    write: PermissionDetail,
-}
 
-#[derive(Debug, Deserialize)]
-struct PermissionDetail {
-    mode: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-struct WorkerStatusResponse {
-    pubkey: String,
-    owner: String,
-    node_type: String,
-    mint_tx_hash: Option<String>,
-}
 
 async fn fetch_dstack_data(connection: &DStackConnection) -> Result<DStackResponse, String> {
     match connection {
@@ -239,50 +222,15 @@ fn load_or_create_nostr_keypair(data_dir: &PathBuf) -> Result<Keys, Box<dyn std:
     }
 }
 
-async fn check_worker_registered(
-    client: &reqwest::Client,
-    registry_url: &str,
-    pubkey: &str,
-) -> Result<bool, Box<dyn std::error::Error>> {
-    let url = format!("{}/permissions/{}", registry_url, pubkey);
-
-    info!("Checking worker registration status at: {}", url);
-
-    match client.get(&url).send().await {
-        Ok(response) => {
-            if response.status().is_success() {
-                match response.json::<PermissionResponse>().await {
-                    Ok(perm_response) => {
-                        let is_registered = perm_response.write.mode == "AllowAll";
-                        info!("Worker registration status: registered={} (mode={})", is_registered, perm_response.write.mode);
-                        Ok(is_registered)
-                    }
-                    Err(e) => {
-                        error!("Failed to parse permission response: {}", e);
-                        // If we can't parse, assume not registered
-                        Ok(false)
-                    }
-                }
-            } else {
-                info!("Worker not registered (status: {})", response.status());
-                Ok(false)
-            }
-        }
-        Err(e) => {
-            error!("Failed to check registration status: {}", e);
-            Err(Box::new(e))
-        }
-    }
-}
-
-async fn register_worker(
+async fn ensure_registered(
     client: &reqwest::Client,
     registry_url: &str,
     pubkey: &str,
     owner: &str,
     node_type: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let url = format!("{}/workers", registry_url);
+    let post_url = format!("{}/workers", registry_url);
+    let worker_url = format!("{}/workers/{}", registry_url, pubkey);
 
     let registration = WorkerRegistration {
         pubkey: pubkey.to_string(),
@@ -290,92 +238,49 @@ async fn register_worker(
         node_type: node_type.to_string(),
     };
 
-    info!("Registering worker at: {}", url);
-    info!("Registration data: pubkey={}, owner={}, node_type={}", pubkey, owner, node_type);
-
-    match client.post(&url).json(&registration).send().await {
-        Ok(response) => {
-            if response.status().is_success() {
-                info!("Worker registered successfully");
-                return Ok(());
-            } else {
-                let status = response.status();
-                let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-                error!("Failed to register worker: status={}, error={}", status, error_text);
-                // Don't return error immediately, fall through to polling
-            }
-        }
-        Err(e) => {
-            error!("Failed to send registration request: {}", e);
-            // Don't return error immediately, fall through to polling
-        }
-    }
-
-    // Poll for registration status
-    let status_url = format!("{}/workers/{}", registry_url, pubkey);
-    info!("Polling worker registration status at: {}", status_url);
-
     for i in 0..10 {
-        info!("Polling attempt {}/10...", i + 1);
-        match client.get(&status_url).send().await {
-            Ok(response) => {
-                if response.status().is_success() {
-                    match response.json::<WorkerStatusResponse>().await {
-                        Ok(status) => {
-                            if let Some(tx_hash) = status.mint_tx_hash {
-                                info!("Worker registration confirmed! Mint tx hash: {}", tx_hash);
-                                return Ok(());
-                            } else {
-                                info!("Worker is minting... (no tx hash yet)");
-                            }
-                        }
-                        Err(e) => {
-                            error!("Failed to parse worker status: {}", e);
-                        }
-                    }
-                } else {
-                    error!("Failed to get worker status: {}", response.status());
-                }
+        info!("Ensure registration attempt {}/10...", i + 1);
+
+        let result = async {
+            // Check if worker exists
+            let resp = client
+                .get(&worker_url)
+                .timeout(std::time::Duration::from_secs(10))
+                .send()
+                .await?;
+
+            if resp.status() != 404 {
+                return Ok(());
+            }
+
+            // Register worker
+            client
+                .post(&post_url)
+                .json(&registration)
+                .timeout(std::time::Duration::from_secs(10))
+                .send()
+                .await?
+                .error_for_status()?;
+
+            Ok::<(), Box<dyn std::error::Error>>(())
+        }
+        .await;
+
+        match result {
+            Ok(_) => {
+                info!("Worker registration check/update successful");
+                return Ok(());
             }
             Err(e) => {
-                error!("Failed to request worker status: {}", e);
+                error!("Registration attempt failed: {}", e);
+                if i < 9 {
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                }
             }
-        }
-
-        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-    }
-
-    Err("Registration failed after polling".into())
-}
-
-async fn ensure_worker_registered(
-    client: &reqwest::Client,
-    registry_url: &str,
-    pubkey: &str,
-    owner: &str,
-    node_type: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    info!("Ensuring worker is registered...");
-
-    // Check if already registered
-    match check_worker_registered(client, registry_url, pubkey).await {
-        Ok(is_registered) => {
-            if is_registered {
-                info!("Worker is already registered, skipping registration");
-                return Ok(());
-            } else {
-                info!("Worker is not registered, proceeding with registration");
-                // Continue to registration
-            }
-        }
-        Err(e) => {
-            error!("Failed to check registration status, attempting registration anyway: {}", e);
-            // Continue to registration even if check fails
         }
     }
 
-    // Register worker
-    register_worker(client, registry_url, pubkey, owner, node_type).await
+    Err("Failed to ensure worker registration after 10 attempts".into())
 }
 
 
@@ -454,7 +359,7 @@ async fn main() {
 
     // Register worker (required for communication with message network)
     info!("Worker registration is required to communicate with the message network");
-    match ensure_worker_registered(
+    match ensure_registered(
         &http_client,
         &registry_url,
         &nostr_pubkey,
