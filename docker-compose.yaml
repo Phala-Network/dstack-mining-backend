@@ -5,11 +5,7 @@ services:
     user: "0:0"  # Run as root to ensure write permissions to volumes
     environment:
       DSTACK_URL: ${DSTACK_BACKEND_DSTACK_URL:-http://host.docker.internal:14520}
-      # Worker registration configuration (required)
-      # Worker must be registered to communicate with message network
-      AUTH_SERVICE_URL: ${AUTH_SERVICE_URL}
       OWNER_ADDRESS: ${OWNER_ADDRESS}
-      NODE_TYPE: ${NODE_TYPE:-node-H100x1}
     extra_hosts:
       host.docker.internal: host-gateway
     ports:
@@ -35,6 +31,7 @@ services:
   dephy-worker:
     image: dephyio/dephy-worker-next:${DEPHY_WORKER_IMAGE_TAG:-next}
     restart: always
+    profiles: ["mining"]
     depends_on:
       dstack-backend:
         condition: service_healthy

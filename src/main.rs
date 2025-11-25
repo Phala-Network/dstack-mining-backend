@@ -1,12 +1,11 @@
 use alloy::primitives::Address;
-use axum::{
-    extract::State,
-    http::StatusCode,
-    response::Json,
-    routing::get,
-    Router,
-};
+use axum::{extract::State, http::StatusCode, response::Json, routing::get, Router};
 use enum_tools::EnumTools;
+use http_body_util::{BodyExt, Empty};
+use hyper::body::Bytes;
+use hyper::Request;
+use hyper_util::client::legacy::Client;
+use hyperlocal::{UnixClientExt, Uri as UnixUri};
 use local_ip_address::local_ip;
 use nostr_sdk::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -18,11 +17,6 @@ use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 use tracing::{error, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use hyper::Request;
-use hyper_util::client::legacy::Client;
-use hyperlocal::{UnixClientExt, Uri as UnixUri};
-use http_body_util::{BodyExt, Empty};
-use hyper::body::Bytes;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BackendInfo {
@@ -58,8 +52,14 @@ struct DStackResponse {
 
 #[derive(Clone)]
 enum DStackConnection {
-    Http { url: String, client: reqwest::Client },
-    UnixSocket { socket_path: String, client: Client<hyperlocal::UnixConnector, Empty<Bytes>> },
+    Http {
+        url: String,
+        client: reqwest::Client,
+    },
+    UnixSocket {
+        socket_path: String,
+        client: Client<hyperlocal::UnixConnector, Empty<Bytes>>,
+    },
 }
 
 #[derive(Clone)]
@@ -69,32 +69,31 @@ struct AppState {
     local_ip: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
-struct WorkerRegistration {
-    pubkey: String,
-    owner: String,
-    node_type: String,
-}
-
-
-
 async fn fetch_dstack_data(connection: &DStackConnection) -> Result<DStackResponse, String> {
     match connection {
         DStackConnection::Http { url, client } => {
             let full_url = format!("{}/prpc/ListGpus?json", url);
             info!("Checking dstack health via HTTP at: {}", full_url);
 
-            let response = client.get(&full_url).send().await
+            let response = client
+                .get(&full_url)
+                .send()
+                .await
                 .map_err(|e| format!("HTTP request failed: {}", e))?;
 
             if !response.status().is_success() {
                 return Err(format!("HTTP error: {}", response.status()));
             }
 
-            response.json::<DStackResponse>().await
+            response
+                .json::<DStackResponse>()
+                .await
                 .map_err(|e| format!("Failed to parse JSON: {}", e))
         }
-        DStackConnection::UnixSocket { socket_path, client } => {
+        DStackConnection::UnixSocket {
+            socket_path,
+            client,
+        } => {
             info!("Checking dstack health via Unix socket at: {}", socket_path);
 
             let uri: hyper::Uri = UnixUri::new(socket_path, "/prpc/ListGpus?json").into();
@@ -104,19 +103,23 @@ async fn fetch_dstack_data(connection: &DStackConnection) -> Result<DStackRespon
                 .body(Empty::<Bytes>::new())
                 .map_err(|e| format!("Failed to build request: {}", e))?;
 
-            let response = client.request(req).await
+            let response = client
+                .request(req)
+                .await
                 .map_err(|e| format!("Unix socket request failed: {}", e))?;
 
             if !response.status().is_success() {
                 return Err(format!("HTTP error: {}", response.status()));
             }
 
-            let body_bytes = response.into_body().collect().await
+            let body_bytes = response
+                .into_body()
+                .collect()
+                .await
                 .map_err(|e| format!("Failed to read response body: {}", e))?
                 .to_bytes();
 
-            serde_json::from_slice(&body_bytes)
-                .map_err(|e| format!("Failed to parse JSON: {}", e))
+            serde_json::from_slice(&body_bytes).map_err(|e| format!("Failed to parse JSON: {}", e))
         }
     }
 }
@@ -137,7 +140,7 @@ async fn check_dstack_health(state: &AppState) -> BackendInfo {
                 "allow_attach_all": dstack_data.allow_attach_all
             });
 
-            info!("DStack is available with {} GPUs", dstack_data.gpus.len());
+            info!("dstack is available with {} GPUs", dstack_data.gpus.len());
 
             let mut pubkeys = HashSet::new();
             pubkeys.insert(state.nostr_pubkey.clone());
@@ -180,7 +183,7 @@ async fn health_handler(State(state): State<Arc<AppState>>) -> (StatusCode, Json
 }
 
 async fn root_handler() -> &'static str {
-    "DStack Backend Health Monitor"
+    "dstack Backend Health Monitor"
 }
 
 fn get_local_ip() -> Option<String> {
@@ -222,67 +225,25 @@ fn load_or_create_nostr_keypair(data_dir: &PathBuf) -> Result<Keys, Box<dyn std:
     }
 }
 
-async fn ensure_registered(
-    client: &reqwest::Client,
-    auth_service_url: &str,
-    pubkey: &str,
-    owner: &str,
-    node_type: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let post_url = format!("{}/workers", auth_service_url);
-    let worker_url = format!("{}/workers/{}", auth_service_url, pubkey);
-
-    let registration = WorkerRegistration {
-        pubkey: pubkey.to_string(),
-        owner: owner.to_string(),
-        node_type: node_type.to_string(),
-    };
-
-    for i in 0..10 {
-        info!("Ensure registration attempt {}/10...", i + 1);
-
-        let result = async {
-            // Check if worker exists
-            let resp = client
-                .get(&worker_url)
-                .timeout(std::time::Duration::from_secs(10))
-                .send()
-                .await?;
-
-            if resp.status() != 404 {
-                return Ok(());
-            }
-
-            // Register worker
-            client
-                .post(&post_url)
-                .json(&registration)
-                .timeout(std::time::Duration::from_secs(10))
-                .send()
-                .await?
-                .error_for_status()?;
-
-            Ok::<(), Box<dyn std::error::Error>>(())
-        }
-        .await;
-
-        match result {
-            Ok(_) => {
-                info!("Worker registration check/update successful");
-                return Ok(());
-            }
-            Err(e) => {
-                error!("Registration attempt failed: {}", e);
-                if i < 9 {
-                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                }
-            }
-        }
+fn determine_node_type(dstack_response: &DStackResponse) -> String {
+    let gpu_count = dstack_response.gpus.len();
+    if gpu_count == 0 {
+        return "CPU".to_string();
     }
 
-    Err("Failed to ensure worker registration after 10 attempts".into())
-}
+    let first_gpu = &dstack_response.gpus[0];
+    let model = if first_gpu.description.contains("H200") {
+        "H200"
+    } else if first_gpu.description.contains("H100") {
+        "H100"
+    } else if first_gpu.description.contains("B200") {
+        "B200"
+    } else {
+        return "Unknown".to_string();
+    };
 
+    format!("node-{}x{}", model, gpu_count)
+}
 
 #[tokio::main]
 async fn main() {
@@ -301,11 +262,9 @@ async fn main() {
         .or_else(|_| std::env::var("DSTACK_BACKEND_DSTACK_URL"))
         .unwrap_or_else(|_| "http://localhost:19060".to_string());
     let dstack_url_config = dstack_url_config.trim().to_string();
-    let data_dir = PathBuf::from(std::env::var("DATA_DIR").unwrap_or_else(|_| "./data".to_string()));
+    let data_dir =
+        PathBuf::from(std::env::var("DATA_DIR").unwrap_or_else(|_| "./data".to_string()));
 
-    // Worker registration configuration (required)
-    let auth_service_url = std::env::var("AUTH_SERVICE_URL")
-        .expect("AUTH_SERVICE_URL environment variable is required for worker registration");
     let owner_address_str = std::env::var("OWNER_ADDRESS")
         .expect("OWNER_ADDRESS environment variable is required for worker registration");
 
@@ -315,19 +274,19 @@ async fn main() {
         .expect("OWNER_ADDRESS must be a valid Ethereum address");
     let owner_address_formatted = owner_address.to_string();
 
-    let node_type = std::env::var("NODE_TYPE").unwrap_or_else(|_| "node-H100x1".to_string());
-
-    info!("Starting DStack Backend Monitor");
+    info!("Starting dstack Backend Monitor");
     info!("Listen address: {}", listen_addr);
-    info!("DStack URL config: {}", dstack_url_config);
+    info!("dstack URL config: {}", dstack_url_config);
     info!("Data directory: {:?}", data_dir);
-    info!("Auth Service URL: {}", auth_service_url);
+
     info!("Owner address: {}", owner_address_formatted);
-    info!("Node type: {}", node_type);
 
     // Parse DSTACK_URL to determine connection type
     let connection = if dstack_url_config.starts_with("unix://") {
-        let socket_path = dstack_url_config.strip_prefix("unix://").unwrap().to_string();
+        let socket_path = dstack_url_config
+            .strip_prefix("unix://")
+            .unwrap()
+            .to_string();
         info!("Using Unix socket connection: {}", socket_path);
         DStackConnection::UnixSocket {
             socket_path,
@@ -345,40 +304,47 @@ async fn main() {
     let local_ip = get_local_ip();
 
     // Load or create Nostr keypair
-    let keys = load_or_create_nostr_keypair(&data_dir)
-        .expect("Failed to load or create Nostr keypair");
+    let keys =
+        load_or_create_nostr_keypair(&data_dir).expect("Failed to load or create Nostr keypair");
 
-    let nostr_pubkey = keys
-        .public_key()
-        .to_hex();
+    let nostr_pubkey = keys.public_key().to_hex();
 
     info!("Nostr public key: {}", nostr_pubkey);
 
-    // Create HTTP client for registration
-    let http_client = reqwest::Client::new();
+    // Fetch dstack data to determine node type
+    let mut node_type = "Unknown".to_string();
+    info!("Connecting to dstack to determine node type...");
 
-    // Register worker (required for communication with message network)
-    info!("Worker registration is required to communicate with the message network");
-    match ensure_registered(
-        &http_client,
-        &auth_service_url,
-        &nostr_pubkey,
-        &owner_address_formatted,
-        &node_type,
-    )
-    .await
-    {
-        Ok(_) => {
-            info!("Worker registration completed successfully");
-            info!("Worker is now authorized to communicate with the message network");
-        }
-        Err(e) => {
-            error!("Worker registration failed: {}", e);
-            error!("Cannot start service without successful registration");
-            error!("Worker must be registered to communicate with the message network");
-            std::process::exit(1);
+    // Simple retry loop for dstack connection
+    for i in 0..5 {
+        match fetch_dstack_data(&connection).await {
+            Ok(data) => {
+                node_type = determine_node_type(&data);
+                info!("Successfully determined node type: {}", node_type);
+                break;
+            }
+            Err(e) => {
+                error!("Failed to fetch dstack data (attempt {}/5): {}", i + 1, e);
+                if i < 4 {
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                }
+            }
         }
     }
+
+    if node_type == "Unknown" {
+        error!("Could not determine node type from dstack. Defaulting to 'Unknown'.");
+        error!("Please ensure dstack is running and accessible.");
+    }
+
+    // Log registration information for manual registration
+    info!("==================================================================");
+    info!("MANUAL REGISTRATION REQUIRED");
+    info!("Please provide the following information to the administrator:");
+    info!("Nostr Public Key: {}", nostr_pubkey);
+    info!("Owner Address:    {}", owner_address_formatted);
+    info!("Node Type:        {}", node_type);
+    info!("==================================================================");
 
     // Create shared state
     let state = Arc::new(AppState {

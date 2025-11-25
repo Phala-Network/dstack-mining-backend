@@ -1,6 +1,6 @@
 # dstack Mining Backend
 
-dstack GPU mining backend service, responsible for monitoring GPU status, registering nodes with the registry center, and communicating with the message network.
+dstack GPU mining backend service, responsible for monitoring GPU status and communicating with the message network.
 
 ## Prerequisites
 
@@ -21,10 +21,10 @@ Without a properly configured dstack service with GPU resources on the host mach
 │                     │
 └─────────────────────┘
           ↑
-          │ Registration + Authentication
+          │ Manual Registration
           │
 ┌─────────────────────┐
-│  dstack Backend     │  ← Monitor GPU + Auto registration
+│  dstack Backend     │  ← Monitor GPU + Generate Keys
 │   (This Project)    │
 └─────────────────────┘
           ↑                ↑
@@ -36,7 +36,7 @@ Without a properly configured dstack service with GPU resources on the host mach
 │   Port: 14520       │    │
 └─────────────────────┘    │
                            │
-                  ┌────────┴────────┐
+                  ┌────────┬────────┐
                   │  Dephy Worker   │  ← Message network communication
                   │   Port: 9001    │
                   └─────────────────┘
@@ -50,9 +50,8 @@ Without a properly configured dstack service with GPU resources on the host mach
 **Functions**:
 - Monitor dstack GPU status
 - Generate/load Nostr keypair (stored in `data/key`)
-- Automatically register node with registry center
+- Detect Node Type from dstack metadata
 - Provide health check API (`/health`)
-- **Only starts after successful registration**
 
 ### 2. Dephy Worker (Included in docker-compose)
 **Role**: Worker for message network communication
@@ -62,7 +61,7 @@ Without a properly configured dstack service with GPU resources on the host mach
 - Connect to message network
 - Handle task distribution
 
-**Dependency**: Backend must start and register successfully first
+**Dependency**: Backend must start and keys must be generated first.
 
 ### 3. Registry Server (External Service)
 **Role**: Centralized node registration and authentication service
@@ -71,8 +70,6 @@ Without a properly configured dstack service with GPU resources on the host mach
 - Receive worker node registrations
 - Verify node permissions
 - Manage node whitelist
-
-**You need to provide**: `AUTH_SERVICE_URL` configuration
 
 ### 4. dstack Service (External Service)
 **Role**: GPU virtualization and scheduling service
@@ -95,37 +92,46 @@ nano .env
 
 Required configuration:
 ```bash
-# Registry center address (required)
-AUTH_SERVICE_URL=http://your-registry-server:9200
-
 # Ethereum owner address (required)
 OWNER_ADDRESS=0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb
-
-# Node type (optional, defaults to node-H100x1)
-NODE_TYPE=node-H100x1
 
 # Worker image version (optional, use v2.0.0 for production)
 DEPHY_WORKER_IMAGE_TAG=v2.1.0
 ```
 
-### 2. Start Services
+### 2. Start Backend
 
 ```bash
 docker compose up -d
 ```
 
-### 3. View Logs
+### 3. Get Registration Info
+
+View the logs to get the information needed for manual registration:
 
 ```bash
-# View startup logs to confirm successful registration
-docker compose logs -f dstack-backend
+docker compose logs dstack-backend
 ```
 
-After successful startup, you should see:
+Look for the "MANUAL REGISTRATION REQUIRED" section:
 ```
-INFO Worker registration completed successfully
-INFO Worker is now authorized to communicate with the message network
-INFO Backend listening on 0.0.0.0:8080
+INFO MANUAL REGISTRATION REQUIRED
+INFO Please provide the following information to the administrator:
+INFO Nostr Public Key: <your-pubkey>
+INFO Owner Address:    <your-owner-address>
+INFO Node Type:        <detected-node-type>
+```
+
+### 4. Register Manually
+
+Send the information from the previous step to the administrator to register your node.
+
+### 5. Start Worker
+
+Once registered, start the worker service:
+
+```bash
+docker compose --profile mining up -d
 ```
 
 ## Environment Variables
@@ -140,11 +146,9 @@ INFO Backend listening on 0.0.0.0:8080
 ### Registration Configuration (Required)
 | Variable | Description | Required |
 |----------|-------------|----------|
-| `AUTH_SERVICE_URL` | Registry center address | ✅ Required |
 | `OWNER_ADDRESS` | Ethereum owner address | ✅ Required |
-| `NODE_TYPE` | Node type | Optional (defaults to `node-H100x1`) |
 
-**Important**: Missing `AUTH_SERVICE_URL` or `OWNER_ADDRESS` will prevent the service from starting.
+**Important**: Missing `OWNER_ADDRESS` will prevent the service from starting.
 
 ## API Endpoints
 
@@ -166,42 +170,30 @@ Returns Backend health status and GPU information
 ### GET /
 Returns basic service information
 
-## Registration Flow
+## Registration Workflow
 
-Backend automatically executes on startup:
-
-1. **Generate keypair**: Save Nostr private key in `data/key` file
-2. **Check registration status**: `GET /permissions/<pubkey>`
-3. **Auto-register** (if not registered):
-   ```
-   POST /workers
-   Body: {
-     "pubkey": "<nostr_pubkey_hex>",
-     "owner": "<ethereum_address>",
-     "node_type": "node-H100x1"
-   }
-   ```
-4. **Start service**: After successful registration, start HTTP service
-
-⚠️ **Registration failure will cause service to exit**. Error logs will show the reason for failure.
+1. **Start Backend**: The backend service starts, generates a Nostr keypair, and connects to the local dstack service to fetch GPU information.
+2. **Get Registration Info**: The backend logs the generated Public Key, the configured Owner Address, and the detected Node Type.
+3. **Manual Registration**: You must provide this information to the administrator to register your node on the whitelist.
+4. **Start Worker**: Once registered, you start the `dephy-worker` service (using the `mining` profile). The worker reads the keys and connects to the message network to start receiving tasks.
 
 ## Troubleshooting
 
 ### Startup Failed: Missing Environment Variables
 ```
-Error: AUTH_SERVICE_URL environment variable is required for worker registration
+Error: OWNER_ADDRESS environment variable is required for worker registration
 ```
-**Solution**: Configure `AUTH_SERVICE_URL` and `OWNER_ADDRESS` in `.env` file
+**Solution**: Configure `OWNER_ADDRESS` in `.env` file
 
-### Registration Failed
+### Node Type Unknown
 ```
-ERROR Worker registration failed: ...
-ERROR Cannot start service without successful registration
+ERROR Could not determine node type from dstack. Defaulting to 'Unknown'.
 ```
 **Solution**:
-1. Check if registry server is running
-2. Check if `AUTH_SERVICE_URL` is correct
-3. Check network connectivity
+1. Ensure dstack is running at `localhost:14520`
+2. Check `DSTACK_BACKEND_DSTACK_URL` configuration
+3. Ensure dstack has GPU resources available
+4. Check the GPU type is supported, currently we only support H100, H200 and B200
 
 ### dstack Connection Failed
 ```
@@ -214,6 +206,7 @@ ERROR Failed to connect to dstack: ...
    - Verify the socket file exists: `ls -l /opt/dstack/dstack-v05x/run/teepod.sock`
    - Ensure the Docker container has access to the socket (mount it as a volume)
    - Check socket permissions
+4. Ensure the dstack service is listened on 0.0.0.0 not just localhost
 
 ## License
 
